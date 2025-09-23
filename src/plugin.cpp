@@ -136,6 +136,31 @@ void cb_exception(CBTYPE cbType, void* callbackInfo)
     srv->pub_socket.send(zmq::buffer(outbuf.data(), outbuf.size()), zmq::send_flags::none);
 }
 
+void cb_stepped(CBTYPE cbType, void* callbackInfo)
+{
+    PLUG_CB_STEPPED* bp = (PLUG_CB_STEPPED*)callbackInfo;
+    msgpack::sbuffer outbuf;
+    std::vector<size_t> params;
+
+    msgpack::pack(outbuf, std::tuple<std::string>(
+        std::string("EVENT_STEPPED")));
+    srv->pub_socket.send(zmq::buffer(outbuf.data(), outbuf.size()), zmq::send_flags::none);
+}
+
+void cb_event(CBTYPE cbType, void* callbackInfo)
+{
+    PLUG_CB_DEBUGEVENT* bp = (PLUG_CB_DEBUGEVENT*)callbackInfo;
+    msgpack::sbuffer outbuf;
+    std::vector<size_t> params;
+
+    msgpack::pack(outbuf, std::tuple<std::string, size_t, size_t, size_t>(
+        std::string("EVENT_DEBUG"),
+        (size_t)bp->DebugEvent->dwDebugEventCode,
+        (size_t)bp->DebugEvent->dwProcessId,
+        (size_t)bp->DebugEvent->dwThreadId));
+    srv->pub_socket.send(zmq::buffer(outbuf.data(), outbuf.size()), zmq::send_flags::none);
+}
+
 bool pluginInit(PLUG_INITSTRUCT* initStruct)
 {
     dprintf("pluginInit(pluginHandle: %d)\n", pluginHandle);
@@ -148,6 +173,8 @@ bool pluginInit(PLUG_INITSTRUCT* initStruct)
     _plugin_registercallback(pluginHandle, CB_UNLOADDLL, cb_unload_dll);
     _plugin_registercallback(pluginHandle, CB_OUTPUTDEBUGSTRING, cb_debugstr);
     _plugin_registercallback(pluginHandle, CB_EXCEPTION, cb_exception);
+    _plugin_registercallback(pluginHandle, CB_STEPPED, cb_stepped);
+    _plugin_registercallback(pluginHandle, CB_DEBUGEVENT, cb_event);
     return true;
 }
 

@@ -1,7 +1,7 @@
 .\build-install-32.cmd
 .\build-install-64.cmd
 
-$version = "0.5.1-pingpong_bat"
+$version = "0.6.0-green_pepe"
 
 if (Test-Path "release32-$version.zip") {
     Remove-Item "release32-$version.zip"

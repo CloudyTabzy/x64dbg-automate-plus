@@ -37,6 +37,7 @@
 #define PLUG_EXPORT extern "C" __declspec(dllexport)
 
 // Global variables required by some of the _plugin_xxx functions
+extern HINSTANCE hinst;
 extern int pluginHandle;
 extern HWND hwndDlg;
 extern int hMenu;

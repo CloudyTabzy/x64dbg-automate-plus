@@ -36,6 +36,7 @@ type = "plugin"
 sources = [
     "src/*.cpp",
     "src/*.h",
+    "src/plugin.rc",
 ]
 link-libraries = ["cppzmq", "msgpack-cxx"]
 compile-features = ["cxx_std_20"]

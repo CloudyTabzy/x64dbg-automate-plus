@@ -37,6 +37,7 @@ class XAutoServer {
     zmq::socket_t rep_socket;
     uint16_t sess_req_rep_port = 0;
     uint16_t sess_pub_sub_port = 0;
+    std::string bind_address = "localhost";
 
     XAutoServer();
     void release_session();

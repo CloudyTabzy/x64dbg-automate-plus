@@ -1,6 +1,7 @@
 #include "pluginmain.h"
 #include "plugin.h"
 
+HINSTANCE hinst;
 int pluginHandle;
 HWND hwndDlg;
 int hMenu;
@@ -14,6 +15,13 @@ int hMenuSymmod;
 
 XAutoServer* srv;
 
+
+BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpvReserved)
+{
+    if (fdwReason == DLL_PROCESS_ATTACH)
+        hinst = hInstDLL;
+    return TRUE;
+}
 
 PLUG_EXPORT bool pluginit(PLUG_INITSTRUCT* initStruct)
 {

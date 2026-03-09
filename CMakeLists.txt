@@ -72,8 +72,10 @@ set(x64dbg-automate_SOURCES
 	"src/xauto_server.cpp"
 	"src/plugin.h"
 	"src/pluginmain.h"
+	"src/resource.h"
 	"src/xauto_cmd.h"
 	"src/xauto_server.h"
+	"src/plugin.rc"
 	cmake.toml
 )
 

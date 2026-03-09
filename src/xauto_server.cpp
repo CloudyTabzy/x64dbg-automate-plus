@@ -125,35 +125,87 @@ void XAutoServer::xauto_srv_req_rep_thread() {
 bool XAutoServer::acquire_session() {
     session_pid = GetCurrentProcessId();
 
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> distrib(0xc000, 0xFFFF);
-
-    rep_socket = zmq::socket_t(context, zmq::socket_type::rep);
-    while(true) {
-        try {
-            sess_req_rep_port = distrib(gen);
-            rep_socket.bind(("tcp://localhost:" + std::to_string(sess_req_rep_port)).c_str());
-            break;
-        } catch (const zmq::error_t& e) {
-            dprintf("Failed to bind REQ/REP socket, retrying: %s\n", e.what());
-            continue;
-        }
+    // Check mode setting: "remote" uses configured address/ports, anything else is local (auto)
+    char mode_buf[64] = {0};
+    bool remote_mode = false;
+    if (BridgeSettingGet("XAutomate", "Mode", mode_buf) && strcmp(mode_buf, "remote") == 0) {
+        remote_mode = true;
     }
-    dprintf("Allocated REQ/REP port: %d\n", sess_req_rep_port);
 
-    pub_socket = zmq::socket_t(context, zmq::socket_type::pub);
-    while(true) {
-        try {
-            sess_pub_sub_port = distrib(gen);
-            pub_socket.bind(("tcp://localhost:" + std::to_string(sess_pub_sub_port)).c_str());
-            break;
-        } catch (const zmq::error_t& e) {
-            dprintf("Failed to bind PUB/SUB socket, retrying: %s\n", e.what());
-            continue;
+    if (remote_mode) {
+        // Remote mode: use configured bind address and fixed ports
+        char bind_addr_buf[256] = {0};
+        if (BridgeSettingGet("XAutomate", "BindAddress", bind_addr_buf) && strlen(bind_addr_buf) > 0) {
+            bind_address = std::string(bind_addr_buf);
+        } else {
+            bind_address = "0.0.0.0";
         }
+
+        duint configured_req_port = 0;
+        duint configured_pub_port = 0;
+        BridgeSettingGetUint("XAutomate", "ReqRepPort", &configured_req_port);
+        BridgeSettingGetUint("XAutomate", "PubSubPort", &configured_pub_port);
+        if (configured_req_port == 0) configured_req_port = 27066;
+        if (configured_pub_port == 0) configured_pub_port = 27067;
+
+        dprintf("Remote mode: BindAddress=%s, ReqRepPort=%u, PubSubPort=%u\n",
+            bind_address.c_str(), (unsigned)configured_req_port, (unsigned)configured_pub_port);
+
+        std::string bind_prefix = "tcp://" + bind_address + ":";
+
+        try {
+            rep_socket = zmq::socket_t(context, zmq::socket_type::rep);
+            sess_req_rep_port = (uint16_t)configured_req_port;
+            rep_socket.bind((bind_prefix + std::to_string(sess_req_rep_port)).c_str());
+            dprintf("Bound REQ/REP on %s%d\n", bind_prefix.c_str(), sess_req_rep_port);
+
+            pub_socket = zmq::socket_t(context, zmq::socket_type::pub);
+            sess_pub_sub_port = (uint16_t)configured_pub_port;
+            pub_socket.bind((bind_prefix + std::to_string(sess_pub_sub_port)).c_str());
+            dprintf("Bound PUB/SUB on %s%d\n", bind_prefix.c_str(), sess_pub_sub_port);
+        } catch (const zmq::error_t& e) {
+            dprintf("Failed to bind remote socket on %s (port %u/%u): %s\n",
+                bind_address.c_str(), (unsigned)configured_req_port, (unsigned)configured_pub_port, e.what());
+            dprintf("Is another instance already running in remote mode on the same ports?\n");
+            rep_socket.close();
+            pub_socket.close();
+            return false;
+        }
+    } else {
+        // Local mode: localhost with random ports
+        bind_address = "localhost";
+        std::string bind_prefix = "tcp://localhost:";
+
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> distrib(0xc000, 0xFFFF);
+
+        rep_socket = zmq::socket_t(context, zmq::socket_type::rep);
+        while(true) {
+            try {
+                sess_req_rep_port = distrib(gen);
+                rep_socket.bind((bind_prefix + std::to_string(sess_req_rep_port)).c_str());
+                break;
+            } catch (const zmq::error_t& e) {
+                dprintf("Failed to bind REQ/REP socket, retrying: %s\n", e.what());
+                continue;
+            }
+        }
+        dprintf("Bound REQ/REP on %s%d\n", bind_prefix.c_str(), sess_req_rep_port);
+
+        pub_socket = zmq::socket_t(context, zmq::socket_type::pub);
+        while(true) {
+            try {
+                sess_pub_sub_port = distrib(gen);
+                pub_socket.bind((bind_prefix + std::to_string(sess_pub_sub_port)).c_str());
+                break;
+            } catch (const zmq::error_t& e) {
+                dprintf("Failed to bind PUB/SUB socket, retrying: %s\n", e.what());
+                continue;
+            }
+        }
+        dprintf("Bound PUB/SUB on %s%d\n", bind_prefix.c_str(), sess_pub_sub_port);
     }
-    dprintf("Allocated PUB/SUB port: %d\n", sess_pub_sub_port);
 
     std::wstring session_file = get_session_filename(session_pid);
     std::ofstream session_out(session_file);
@@ -161,7 +213,7 @@ bool XAutoServer::acquire_session() {
         dprintf("Failed to open session file: %s\n", session_file.c_str());
         return false;
     }
-    session_out << sess_req_rep_port << std::endl << sess_pub_sub_port << std::endl;
+    session_out << sess_req_rep_port << std::endl << sess_pub_sub_port << std::endl << bind_address << std::endl;
     session_out.close();
 
     dprintf("Allocated session ID: %d\n", session_pid);

@@ -1,6 +1,10 @@
 #include "plugin.h"
 #include "pluginmain.h"
+#include "resource.h"
 
+#include <string>
+
+constexpr int MENU_SETTINGS = 1;
 
 CBTYPE last_event;
 void* last_cbinfo;
@@ -223,6 +227,122 @@ void cb_exit_process(CBTYPE cbType, void* callbackInfo)
     srv->pub_socket.send(zmq::buffer(outbuf.data(), outbuf.size()), zmq::send_flags::none);
 }
 
+static void EnableRemoteControls(HWND hDlg, BOOL enable)
+{
+    EnableWindow(GetDlgItem(hDlg, IDC_EDIT_BIND), enable);
+    EnableWindow(GetDlgItem(hDlg, IDC_EDIT_REQPORT), enable);
+    EnableWindow(GetDlgItem(hDlg, IDC_EDIT_PUBPORT), enable);
+    EnableWindow(GetDlgItem(hDlg, IDC_STATIC_BIND), enable);
+    EnableWindow(GetDlgItem(hDlg, IDC_STATIC_REQPORT), enable);
+    EnableWindow(GetDlgItem(hDlg, IDC_STATIC_PUBPORT), enable);
+}
+
+static INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg)
+    {
+    case WM_INITDIALOG:
+    {
+        // Load current mode
+        char mode[64] = {0};
+        bool remote = false;
+        if (BridgeSettingGet("XAutomate", "Mode", mode) && strcmp(mode, "remote") == 0)
+            remote = true;
+
+        CheckRadioButton(hDlg, IDC_RADIO_LOCAL, IDC_RADIO_REMOTE,
+            remote ? IDC_RADIO_REMOTE : IDC_RADIO_LOCAL);
+
+        // Load remote config
+        char bind_addr[256] = {0};
+        if (!BridgeSettingGet("XAutomate", "BindAddress", bind_addr) || strlen(bind_addr) == 0)
+            strncpy_s(bind_addr, "0.0.0.0", _TRUNCATE);
+
+        duint req_port = 0, pub_port = 0;
+        BridgeSettingGetUint("XAutomate", "ReqRepPort", &req_port);
+        BridgeSettingGetUint("XAutomate", "PubSubPort", &pub_port);
+        if (req_port == 0) req_port = 27066;
+        if (pub_port == 0) pub_port = 27067;
+
+        SetDlgItemTextA(hDlg, IDC_EDIT_BIND, bind_addr);
+
+        char port_buf[16];
+        snprintf(port_buf, sizeof(port_buf), "%llu", (unsigned long long)req_port);
+        SetDlgItemTextA(hDlg, IDC_EDIT_REQPORT, port_buf);
+        snprintf(port_buf, sizeof(port_buf), "%llu", (unsigned long long)pub_port);
+        SetDlgItemTextA(hDlg, IDC_EDIT_PUBPORT, port_buf);
+
+        EnableRemoteControls(hDlg, remote ? TRUE : FALSE);
+        return TRUE;
+    }
+
+    case WM_COMMAND:
+        switch (LOWORD(wParam))
+        {
+        case IDC_RADIO_LOCAL:
+            EnableRemoteControls(hDlg, FALSE);
+            return TRUE;
+
+        case IDC_RADIO_REMOTE:
+            EnableRemoteControls(hDlg, TRUE);
+            return TRUE;
+
+        case IDOK:
+        {
+            bool remote = IsDlgButtonChecked(hDlg, IDC_RADIO_REMOTE) == BST_CHECKED;
+
+            if (remote) {
+                char bind_addr[256] = {0};
+                GetDlgItemTextA(hDlg, IDC_EDIT_BIND, bind_addr, sizeof(bind_addr));
+                UINT req_port = GetDlgItemInt(hDlg, IDC_EDIT_REQPORT, nullptr, FALSE);
+                UINT pub_port = GetDlgItemInt(hDlg, IDC_EDIT_PUBPORT, nullptr, FALSE);
+
+                if (req_port == 0 || pub_port == 0 || req_port > 65535 || pub_port > 65535) {
+                    MessageBoxA(hDlg, "Ports must be between 1 and 65535.", "XAutomate", MB_ICONWARNING);
+                    return TRUE;
+                }
+                if (req_port == pub_port) {
+                    MessageBoxA(hDlg, "REQ/REP and PUB/SUB ports must be different.", "XAutomate", MB_ICONWARNING);
+                    return TRUE;
+                }
+                if (strlen(bind_addr) == 0) {
+                    MessageBoxA(hDlg, "Bind address cannot be empty.", "XAutomate", MB_ICONWARNING);
+                    return TRUE;
+                }
+
+                BridgeSettingSet("XAutomate", "Mode", "remote");
+                BridgeSettingSet("XAutomate", "BindAddress", bind_addr);
+                BridgeSettingSetUint("XAutomate", "ReqRepPort", (duint)req_port);
+                BridgeSettingSetUint("XAutomate", "PubSubPort", (duint)pub_port);
+            } else {
+                BridgeSettingSet("XAutomate", "Mode", "local");
+            }
+
+            BridgeSettingFlush();
+            EndDialog(hDlg, IDOK);
+            return TRUE;
+        }
+
+        case IDCANCEL:
+            EndDialog(hDlg, IDCANCEL);
+            return TRUE;
+        }
+        break;
+
+    case WM_CLOSE:
+        EndDialog(hDlg, IDCANCEL);
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+void cb_menu_entry(CBTYPE cbType, void* callbackInfo)
+{
+    PLUG_CB_MENUENTRY* info = (PLUG_CB_MENUENTRY*)callbackInfo;
+    if (info->hEntry == MENU_SETTINGS)
+        DialogBoxA(hinst, MAKEINTRESOURCEA(IDD_SETTINGS), hwndDlg, SettingsDlgProc);
+}
+
 bool pluginInit(PLUG_INITSTRUCT* initStruct)
 {
     dprintf("pluginInit(pluginHandle: %d)\n", pluginHandle);
@@ -244,6 +364,7 @@ bool pluginInit(PLUG_INITSTRUCT* initStruct)
     _plugin_registercallback(pluginHandle, CB_DETACH, cb_detach);
     _plugin_registercallback(pluginHandle, CB_CREATEPROCESS, cb_create_process);
     _plugin_registercallback(pluginHandle, CB_EXITPROCESS, cb_exit_process);
+    _plugin_registercallback(pluginHandle, CB_MENUENTRY, cb_menu_entry);
     return true;
 }
 
@@ -256,4 +377,5 @@ void pluginStop()
 void pluginSetup()
 {
     dprintf("pluginSetup(pluginHandle: %d)\n", pluginHandle);
+    _plugin_menuaddentry(hMenu, MENU_SETTINGS, "Settings...");
 }

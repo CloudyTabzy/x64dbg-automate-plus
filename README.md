@@ -1,14 +1,14 @@
-# x64dbg Automate Plus — ZMQ RPC Server
+# Axon MCP — ZMQ RPC Server for x64dbg
 
-> The C++ x64dbg plugin that powers the [x64dbg Automate Plus](https://github.com/CloudyTabzy/x64dbg-automate-pyclient-plus) AI-native runtime analysis platform.
+> The C++ x64dbg plugin that powers the [Axon MCP Python client](https://github.com/CloudyTabzy/x64dbg-automate-pyclient-plus) — an AI-native runtime analysis platform.
 
 This plugin exposes x64dbg's full debugging, analysis, and introspection capabilities over a **ZeroMQ RPC server** with **MessagePack** serialization. It is the backbone that lets LLM agents and automation scripts control the debugger with structured commands instead of raw GUI interactions.
 
 ---
 
-## What's New (Plus Edition)
+## What's New (Axon MCP Edition)
 
-The Plus edition significantly expands the original RPC surface from ~30 to **40+ commands**, adding deep runtime introspection capabilities required for automated reverse engineering:
+The Axon MCP edition significantly expands the original RPC surface from ~30 to **40+ commands**, adding deep runtime introspection capabilities required for automated reverse engineering:
 
 | New Command | SDK Source | What It Returns |
 |-------------|-----------|-----------------|

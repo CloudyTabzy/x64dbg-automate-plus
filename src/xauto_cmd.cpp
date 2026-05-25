@@ -1,8 +1,10 @@
 #include "xauto_cmd.h"
 #include <pluginsdk/bridgemain.h>
+#include <pluginsdk/bridgegraph.h>
 #include "pluginmain.h"
 #include <TlHelp32.h>
 #include <Shlwapi.h>
+#include <winternl.h>
 
 
 void get_debugger_pid(msgpack::sbuffer& response_buffer) {
@@ -699,4 +701,502 @@ std::wstring get_session_filename(size_t session_pid) {
     }
 
     return std::wstring(temp_path) + L"xauto_session." + std::to_wstring(session_pid) + L".lock";
+}
+
+
+void dbg_get_tls_callbacks(msgpack::sbuffer& response_buffer) {
+    DWORD pid = DbgGetProcessId();
+    if (pid == 0) {
+        XAutoErrorResponse resp_obj = {"XERROR_NO_TARGET", "No debuggee attached"};
+        msgpack::pack(response_buffer, resp_obj);
+        return;
+    }
+
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+    if (!hProcess) {
+        XAutoErrorResponse resp_obj = {"XERROR_OPEN_PROCESS", "Failed to open debugee process"};
+        msgpack::pack(response_buffer, resp_obj);
+        return;
+    }
+
+    wchar_t exe_path[MAX_PATH];
+    DWORD path_len = MAX_PATH;
+    std::vector<uint32_t> callback_rvas;
+
+    if (QueryFullProcessImageNameW(hProcess, 0, exe_path, &path_len)) {
+        HANDLE hFile = CreateFileW(exe_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (hFile != INVALID_HANDLE_VALUE) {
+            IMAGE_DOS_HEADER dos_header;
+            DWORD bytes_read;
+            if (ReadFile(hFile, &dos_header, sizeof(dos_header), &bytes_read, NULL) && dos_header.e_magic == IMAGE_DOS_SIGNATURE) {
+                SetFilePointer(hFile, dos_header.e_lfanew, NULL, FILE_BEGIN);
+                IMAGE_NT_HEADERS32 nt_headers;
+                if (ReadFile(hFile, &nt_headers, sizeof(nt_headers), &bytes_read, NULL) && nt_headers.Signature == IMAGE_NT_SIGNATURE) {
+                    IMAGE_DATA_DIRECTORY tls_dir;
+                    #ifdef _WIN64
+                    if (nt_headers.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+                        tls_dir = ((IMAGE_NT_HEADERS64*)&nt_headers)->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
+                    } else
+                    #endif
+                    {
+                        tls_dir = nt_headers.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
+                    }
+
+                    if (tls_dir.VirtualAddress != 0 && tls_dir.Size >= sizeof(IMAGE_TLS_DIRECTORY32)) {
+                        DWORD tls_raw = tls_dir.VirtualAddress;
+                        IMAGE_TLS_DIRECTORY32 tls;
+                        SetFilePointer(hFile, tls_raw, NULL, FILE_BEGIN);
+                        if (ReadFile(hFile, &tls, sizeof(tls), &bytes_read, NULL)) {
+                            DWORD callback_array_rva = (DWORD)(tls.AddressOfCallBacks - nt_headers.OptionalHeader.ImageBase);
+                            if (callback_array_rva != 0) {
+                                SetFilePointer(hFile, callback_array_rva, NULL, FILE_BEGIN);
+                                DWORD callback_rva;
+                                while (ReadFile(hFile, &callback_rva, sizeof(callback_rva), &bytes_read, NULL) && bytes_read == sizeof(callback_rva)) {
+                                    if (callback_rva == 0) break;
+                                    callback_rvas.push_back(callback_rva);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            CloseHandle(hFile);
+        }
+    }
+
+    CloseHandle(hProcess);
+    msgpack::pack(response_buffer, callback_rvas);
+}
+
+
+void dbg_virtual_protect_ex(msgpack::object root, msgpack::sbuffer& response_buffer) {
+    size_t addr;
+    size_t size;
+    uint32_t new_prot;
+
+    if (root.via.array.size < 4 ||
+        root.via.array.ptr[1].type != msgpack::type::POSITIVE_INTEGER ||
+        root.via.array.ptr[2].type != msgpack::type::POSITIVE_INTEGER ||
+        root.via.array.ptr[3].type != msgpack::type::POSITIVE_INTEGER) {
+        XAutoErrorResponse resp_obj = {"XERROR_BAD_VPROTECT", "Need addr, size, new_prot"};
+        msgpack::pack(response_buffer, resp_obj);
+        return;
+    }
+
+    root.via.array.ptr[1].convert(addr);
+    root.via.array.ptr[2].convert(size);
+    root.via.array.ptr[3].convert(new_prot);
+
+    DWORD pid = DbgGetProcessId();
+    if (pid == 0) {
+        msgpack::pack(response_buffer, false);
+        return;
+    }
+
+    HANDLE hProcess = OpenProcess(PROCESS_VM_OPERATION, FALSE, pid);
+    if (!hProcess) {
+        msgpack::pack(response_buffer, false);
+        return;
+    }
+
+    DWORD old_prot;
+    BOOL result = VirtualProtectEx(hProcess, (LPVOID)addr, size, new_prot, &old_prot);
+    CloseHandle(hProcess);
+    msgpack::pack(response_buffer, (bool)result);
+}
+
+
+void dbg_suspend_all_threads(msgpack::sbuffer& response_buffer) {
+    DWORD pid = DbgGetProcessId();
+    if (pid == 0) {
+        XAutoErrorResponse resp_obj = {"XERROR_NO_TARGET", "No debuggee attached"};
+        msgpack::pack(response_buffer, resp_obj);
+        return;
+    }
+
+    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (hSnapshot == INVALID_HANDLE_VALUE) {
+        msgpack::pack(response_buffer, false);
+        return;
+    }
+
+    THREADENTRY32 te32;
+    te32.dwSize = sizeof(THREADENTRY32);
+
+    int suspended = 0;
+    int failed = 0;
+
+    if (Thread32First(hSnapshot, &te32)) {
+        do {
+            if (te32.th32OwnerProcessID == pid) {
+                HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te32.th32ThreadID);
+                if (hThread) {
+                    if (SuspendThread(hThread) != (DWORD)-1) {
+                        suspended++;
+                    } else {
+                        failed++;
+                    }
+                    CloseHandle(hThread);
+                } else {
+                    failed++;
+                }
+            }
+        } while (Thread32Next(hSnapshot, &te32));
+    }
+
+    CloseHandle(hSnapshot);
+    msgpack::pack(response_buffer, std::tuple<int, int>(suspended, failed));
+}
+
+
+void dbg_get_peb(msgpack::sbuffer& response_buffer) {
+    DWORD pid = DbgGetProcessId();
+    if (pid == 0) {
+        XAutoErrorResponse resp_obj = {"XERROR_NO_TARGET", "No debuggee attached"};
+        msgpack::pack(response_buffer, resp_obj);
+        return;
+    }
+
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+    if (!hProcess) {
+        XAutoErrorResponse resp_obj = {"XERROR_OPEN_PROCESS", "Failed to open debugee process"};
+        msgpack::pack(response_buffer, resp_obj);
+        return;
+    }
+
+    typedef LONG (WINAPI *PNtQueryInformationProcess)(
+        HANDLE, ULONG, PVOID, ULONG, PULONG);
+    static PNtQueryInformationProcess pNtQIP = 
+        (PNtQueryInformationProcess)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess");
+
+    uint8_t being_debugged = 0;
+    uint32_t nt_global_flag = 0;
+    uint32_t heap_flags = 0;
+    uint32_t heap_force_flags = 0;
+
+    if (pNtQIP) {
+        PROCESS_BASIC_INFORMATION pbi;
+        memset(&pbi, 0, sizeof(pbi));
+
+        LONG status = pNtQIP(hProcess, 0, &pbi, sizeof(pbi), NULL);
+        if (status >= 0 && pbi.PebBaseAddress) {
+            SIZE_T bytes_read;
+            uint8_t peb_byte;
+
+            if (ReadProcessMemory(hProcess, (BYTE*)pbi.PebBaseAddress + 2, &peb_byte, 1, &bytes_read) && bytes_read == 1) {
+                being_debugged = peb_byte;
+            }
+
+            #ifdef _WIN64
+            ReadProcessMemory(hProcess, (BYTE*)pbi.PebBaseAddress + 0xBC, &nt_global_flag, 4, &bytes_read);
+            #else
+            ReadProcessMemory(hProcess, (BYTE*)pbi.PebBaseAddress + 0x68, &nt_global_flag, 4, &bytes_read);
+            #endif
+
+            ULONG_PTR process_heap_ptr = 0;
+            #ifdef _WIN64
+            if (ReadProcessMemory(hProcess, (BYTE*)pbi.PebBaseAddress + 0x30, &process_heap_ptr, sizeof(process_heap_ptr), &bytes_read) && process_heap_ptr != 0) {
+                ReadProcessMemory(hProcess, (BYTE*)process_heap_ptr + 0x70, &heap_flags, 4, &bytes_read);
+                ReadProcessMemory(hProcess, (BYTE*)process_heap_ptr + 0x74, &heap_force_flags, 4, &bytes_read);
+            }
+            #else
+            if (ReadProcessMemory(hProcess, (BYTE*)pbi.PebBaseAddress + 0x18, &process_heap_ptr, sizeof(process_heap_ptr), &bytes_read) && process_heap_ptr != 0) {
+                ReadProcessMemory(hProcess, (BYTE*)process_heap_ptr + 0x0C, &heap_flags, 4, &bytes_read);
+                ReadProcessMemory(hProcess, (BYTE*)process_heap_ptr + 0x10, &heap_force_flags, 4, &bytes_read);
+            }
+            #endif
+        }
+    }
+
+    CloseHandle(hProcess);
+
+    std::tuple<uint8_t, uint32_t, uint32_t, uint32_t> result(being_debugged, nt_global_flag, heap_flags, heap_force_flags);
+    msgpack::pack(response_buffer, result);
+}
+
+
+void dbg_get_process_info(msgpack::sbuffer& response_buffer) {
+    DWORD pid = DbgGetProcessId();
+    DWORD tid = DbgGetThreadId();
+    
+    size_t entry_point = 0;
+    size_t image_base = 0;
+    size_t image_size = 0;
+    std::string exe_path_str;
+    bool is_64bit = false;
+
+    if (pid != 0) {
+        is_64bit = (sizeof(void*) == 8);
+
+        HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+        if (hProcess) {
+            wchar_t path_buf[MAX_PATH];
+            DWORD path_len = MAX_PATH;
+            if (QueryFullProcessImageNameW(hProcess, 0, path_buf, &path_len)) {
+                int len = WideCharToMultiByte(CP_UTF8, 0, path_buf, -1, NULL, 0, NULL, NULL);
+                if (len > 0) {
+                    std::vector<char> buf(len);
+                    WideCharToMultiByte(CP_UTF8, 0, path_buf, -1, buf.data(), len, NULL, NULL);
+                    exe_path_str.assign(buf.data());
+
+                    HANDLE hFile = CreateFileW(path_buf, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                    if (hFile != INVALID_HANDLE_VALUE) {
+                        IMAGE_DOS_HEADER dos_header;
+                        DWORD bytes_read;
+                        if (ReadFile(hFile, &dos_header, sizeof(dos_header), &bytes_read, NULL) && dos_header.e_magic == IMAGE_DOS_SIGNATURE) {
+                            SetFilePointer(hFile, dos_header.e_lfanew, NULL, FILE_BEGIN);
+                            IMAGE_NT_HEADERS32 nt_headers;
+                            if (ReadFile(hFile, &nt_headers, sizeof(nt_headers), &bytes_read, NULL) && nt_headers.Signature == IMAGE_NT_SIGNATURE) {
+                                #ifdef _WIN64
+                                if (nt_headers.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+                                    auto* hdr64 = (IMAGE_NT_HEADERS64*)&nt_headers;
+                                    entry_point = hdr64->OptionalHeader.AddressOfEntryPoint;
+                                    image_base = hdr64->OptionalHeader.ImageBase;
+                                    image_size = hdr64->OptionalHeader.SizeOfImage;
+                                    is_64bit = true;
+                                } else
+                                #endif
+                                {
+                                    entry_point = nt_headers.OptionalHeader.AddressOfEntryPoint;
+                                    image_base = nt_headers.OptionalHeader.ImageBase;
+                                    image_size = nt_headers.OptionalHeader.SizeOfImage;
+                                    is_64bit = false;
+                                }
+                            }
+                        }
+                        CloseHandle(hFile);
+                    }
+                }
+            }
+            CloseHandle(hProcess);
+        }
+    }
+
+    std::tuple<uint32_t, uint32_t, size_t, size_t, size_t, std::string, bool> result(
+        (uint32_t)pid, (uint32_t)tid, entry_point, image_base, image_size, exe_path_str, is_64bit
+    );
+    msgpack::pack(response_buffer, result);
+}
+
+void dbg_get_callstack(msgpack::sbuffer& response_buffer) {
+    DBGCALLSTACK callstack;
+    DbgFunctions()->GetCallStackEx(&callstack, false);
+    std::vector<CallStackEntryTup> entries;
+    for (int i = 0; i < callstack.total; i++) {
+        entries.push_back(CallStackEntryTup(
+            callstack.entries[i].addr,
+            callstack.entries[i].from,
+            callstack.entries[i].to,
+            std::string(callstack.entries[i].comment)
+        ));
+    }
+    msgpack::pack(response_buffer, entries);
+    BridgeFree(callstack.entries);
+}
+
+// ============================================================================
+// Phase 7+ — AI-native runtime analysis extensions
+// ============================================================================
+
+void dbg_get_threads(msgpack::sbuffer& response_buffer) {
+    THREADLIST threadList;
+    DbgGetThreadList(&threadList);
+    std::vector<ThreadInfoTup> entries;
+    for (int i = 0; i < threadList.count; i++) {
+        auto& t = threadList.list[i];
+        entries.push_back(ThreadInfoTup(
+            t.BasicInfo.ThreadId,
+            t.BasicInfo.ThreadStartAddress,
+            t.BasicInfo.ThreadLocalBase,
+            t.ThreadCip,
+            t.SuspendCount,
+            (uint32_t)t.Priority,
+            (uint32_t)t.WaitReason,
+            t.LastError,
+            std::string(t.BasicInfo.threadName)
+        ));
+    }
+    msgpack::pack(response_buffer, entries);
+    BridgeFree(threadList.list);
+}
+
+void dbg_get_xrefs(msgpack::object root, msgpack::sbuffer& response_buffer) {
+    size_t addr = 0;
+    if (root.via.array.size < 2 || root.via.array.ptr[1].type != msgpack::type::POSITIVE_INTEGER) {
+        XAutoErrorResponse resp = {"XERROR_BAD_ARG", "Invalid or missing address for xrefs"};
+        msgpack::pack(response_buffer, resp);
+        return;
+    }
+    root.via.array.ptr[1].convert(addr);
+
+    XREF_INFO info;
+    if (!DbgXrefGet(addr, &info)) {
+        XAutoErrorResponse resp = {"XERROR_XREF_FAILED", "Failed to get xrefs"};
+        msgpack::pack(response_buffer, resp);
+        return;
+    }
+    std::vector<XrefRecordTup> records;
+    for (size_t i = 0; i < info.refcount; i++) {
+        records.push_back(XrefRecordTup(info.references[i].addr, (uint32_t)info.references[i].type));
+    }
+    msgpack::pack(response_buffer, records);
+    BridgeFree(info.references);
+}
+
+void dbg_get_function(msgpack::object root, msgpack::sbuffer& response_buffer) {
+    size_t addr = 0;
+    if (root.via.array.size < 2 || root.via.array.ptr[1].type != msgpack::type::POSITIVE_INTEGER) {
+        XAutoErrorResponse resp = {"XERROR_BAD_ARG", "Invalid or missing address for function info"};
+        msgpack::pack(response_buffer, resp);
+        return;
+    }
+    root.via.array.ptr[1].convert(addr);
+
+    Script::Function::FunctionInfo info;
+    if (!Script::Function::GetInfo(addr, &info)) {
+        XAutoErrorResponse resp = {"XERROR_FUNC_NOT_FOUND", "No function found at address"};
+        msgpack::pack(response_buffer, resp);
+        return;
+    }
+    msgpack::pack(response_buffer, FunctionInfoTup(
+        info.rvaStart,
+        info.rvaEnd,
+        info.instructioncount,
+        info.manual
+    ));
+}
+
+void dbg_analyze_function(msgpack::object root, msgpack::sbuffer& response_buffer) {
+    size_t entry = 0;
+    if (root.via.array.size < 2 || root.via.array.ptr[1].type != msgpack::type::POSITIVE_INTEGER) {
+        XAutoErrorResponse resp = {"XERROR_BAD_ARG", "Invalid or missing entry point for CFG analysis"};
+        msgpack::pack(response_buffer, resp);
+        return;
+    }
+    root.via.array.ptr[1].convert(entry);
+
+    BridgeCFGraphList graph;
+    if (!DbgAnalyzeFunction(entry, &graph)) {
+        XAutoErrorResponse resp = {"XERROR_ANALYZE_FAILED", "Failed to analyze function"};
+        msgpack::pack(response_buffer, resp);
+        return;
+    }
+
+    // Serialize as tuple: (entry_point, [node_tuples...])
+    // Each node tuple: (start, end, brtrue, brfalse, icount, terminal, split, indirectcall, [exits...], [(addr, [bytes...]), ...])
+    std::vector<std::tuple<
+        size_t, size_t, size_t, size_t, size_t, bool, bool, bool,
+        std::vector<size_t>,
+        std::vector<std::tuple<size_t, std::vector<uint8_t>>>
+    >> nodeTuples;
+
+    auto nodes = (BridgeCFNodeList*)graph.nodes.data;
+    int nodeCount = graph.nodes.count;
+    for (int i = 0; i < nodeCount; i++) {
+        auto& n = nodes[i];
+
+        std::vector<size_t> exits;
+        auto exitData = (duint*)n.exits.data;
+        for (int j = 0; j < n.exits.count; j++) {
+            exits.push_back(exitData[j]);
+        }
+
+        std::vector<std::tuple<size_t, std::vector<uint8_t>>> instrs;
+        auto instrData = (BridgeCFInstruction*)n.instrs.data;
+        for (int j = 0; j < n.instrs.count; j++) {
+            std::vector<uint8_t> bytes;
+            for (int k = 0; k < 15; k++) bytes.push_back(instrData[j].data[k]);
+            instrs.push_back(std::make_tuple((size_t)instrData[j].addr, bytes));
+        }
+
+        nodeTuples.push_back(std::make_tuple(
+            (size_t)n.start, (size_t)n.end, (size_t)n.brtrue, (size_t)n.brfalse,
+            (size_t)n.icount, n.terminal, n.split, n.indirectcall,
+            exits, instrs
+        ));
+    }
+
+    msgpack::pack(response_buffer, std::make_tuple((size_t)graph.entryPoint, nodeTuples));
+    BridgeCFGraph::Free(&graph);
+}
+
+void dbg_get_string(msgpack::object root, msgpack::sbuffer& response_buffer) {
+    size_t addr = 0;
+    if (root.via.array.size < 2 || root.via.array.ptr[1].type != msgpack::type::POSITIVE_INTEGER) {
+        XAutoErrorResponse resp = {"XERROR_BAD_ARG", "Invalid or missing address for string"};
+        msgpack::pack(response_buffer, resp);
+        return;
+    }
+    root.via.array.ptr[1].convert(addr);
+
+    char text[2048];
+    if (DbgGetStringAt(addr, text)) {
+        msgpack::pack(response_buffer, std::string(text));
+    } else {
+        msgpack::pack(response_buffer, "");
+    }
+}
+
+void dbg_get_patches(msgpack::sbuffer& response_buffer) {
+    size_t count = 0;
+    // First call: get count (returns false but sets count)
+    DbgFunctions()->PatchEnum(nullptr, &count);
+    if (count == 0) {
+        msgpack::pack(response_buffer, std::vector<PatchInfoTup>());
+        return;
+    }
+    DBGPATCHINFO* patches = (DBGPATCHINFO*)BridgeAlloc(count * sizeof(DBGPATCHINFO));
+    if (!DbgFunctions()->PatchEnum(patches, &count)) {
+        BridgeFree(patches);
+        msgpack::pack(response_buffer, std::vector<PatchInfoTup>());
+        return;
+    }
+    std::vector<PatchInfoTup> results;
+    for (size_t i = 0; i < count; i++) {
+        results.push_back(PatchInfoTup(patches[i].addr, patches[i].oldbyte, patches[i].newbyte));
+    }
+    msgpack::pack(response_buffer, results);
+    BridgeFree(patches);
+}
+
+void dbg_get_modules(msgpack::sbuffer& response_buffer) {
+    BridgeList<Script::Module::ModuleInfo> list;
+    if (!Script::Module::GetList(&list)) {
+        msgpack::pack(response_buffer, std::vector<ModuleInfoTup>());
+        return;
+    }
+    std::vector<ModuleInfoTup> results;
+    for (int i = 0; i < list.Count(); i++) {
+        auto& m = list[i];
+        results.push_back(ModuleInfoTup(
+            (size_t)m.base, (size_t)m.size, (size_t)m.entry,
+            m.sectionCount, std::string(m.name), std::string(m.path)
+        ));
+    }
+    msgpack::pack(response_buffer, results);
+}
+
+void dbg_get_seh_chain(msgpack::sbuffer& response_buffer) {
+    DBGSEHCHAIN chain;
+    DbgFunctions()->GetSEHChain(&chain);
+    std::vector<SehRecordTup> records;
+    for (duint i = 0; i < chain.total; i++) {
+        records.push_back(SehRecordTup(chain.records[i].addr, chain.records[i].handler));
+    }
+    msgpack::pack(response_buffer, records);
+    BridgeFree(chain.records);
+}
+
+void dbg_get_handles(msgpack::sbuffer& response_buffer) {
+    BridgeList<HANDLEINFO> list;
+    if (!DbgFunctions()->EnumHandles(&list)) {
+        msgpack::pack(response_buffer, std::vector<HandleInfoTup>());
+        return;
+    }
+    std::vector<HandleInfoTup> results;
+    for (int i = 0; i < list.Count(); i++) {
+        auto& h = list[i];
+        results.push_back(HandleInfoTup((size_t)h.Handle, h.TypeNumber, h.GrantedAccess));
+    }
+    msgpack::pack(response_buffer, results);
 }

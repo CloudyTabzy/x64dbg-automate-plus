@@ -74,6 +74,36 @@ int XAutoServer::_dispatch_cmd(msgpack::object root, msgpack::sbuffer& response_
             get_comment_at(root, response_buffer);
         } else if (cmd == XAUTO_REQ_GET_SYMBOL) {
             get_symbol_at(root, response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_GET_TLS_CALLBACKS) {
+            dbg_get_tls_callbacks(response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_VIRTUAL_PROTECT_EX) {
+            dbg_virtual_protect_ex(root, response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_SUSPEND_ALL_THREADS) {
+            dbg_suspend_all_threads(response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_GET_PEB) {
+            dbg_get_peb(response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_GET_PROCESS_INFO) {
+            dbg_get_process_info(response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_GET_CALLSTACK) {
+            dbg_get_callstack(response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_GET_THREADS) {
+            dbg_get_threads(response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_GET_XREFS) {
+            dbg_get_xrefs(root, response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_GET_FUNCTION) {
+            dbg_get_function(root, response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_ANALYZE_FUNCTION) {
+            dbg_analyze_function(root, response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_GET_STRING) {
+            dbg_get_string(root, response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_GET_PATCHES) {
+            dbg_get_patches(response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_GET_MODULES) {
+            dbg_get_modules(response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_GET_SEH_CHAIN) {
+            dbg_get_seh_chain(response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_GET_HANDLES) {
+            dbg_get_handles(response_buffer);
         } else if (cmd == XAUTO_REQ_QUIT) {
             msgpack::pack(response_buffer, "OK_QUITTING");
             return DISPATCH_EXIT;

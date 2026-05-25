@@ -29,23 +29,12 @@ include("cmake/msvc-configurations.cmake")
 
 project(x64dbg-automate)
 
-if(CMKR_ROOT_PROJECT AND NOT CMKR_DISABLE_VCPKG)
-	include(FetchContent)
-	# Fix warnings about DOWNLOAD_EXTRACT_TIMESTAMP
-	if(POLICY CMP0135)
-		cmake_policy(SET CMP0135 NEW)
-	endif()
-	message(STATUS "Fetching vcpkg (2025.01.13)...")
-	FetchContent_Declare(vcpkg URL "https://github.com/microsoft/vcpkg/archive/refs/tags/2025.01.13.tar.gz")
-	FetchContent_GetProperties(vcpkg)
-	if(NOT vcpkg_POPULATED)
-		FetchContent_Populate(vcpkg)
-		include("${vcpkg_SOURCE_DIR}/scripts/buildsystems/vcpkg.cmake")
-	endif()
-endif()
-
 include(FetchContent)
 
+# Fix warnings about DOWNLOAD_EXTRACT_TIMESTAMP
+if(POLICY CMP0135)
+	cmake_policy(SET CMP0135 NEW)
+endif()
 message(STATUS "Fetching x64dbg...")
 FetchContent_Declare(x64dbg
 	URL
@@ -63,6 +52,8 @@ find_package(cppzmq REQUIRED)
 find_package(msgpack-cxx REQUIRED)
 
 find_package(Boost REQUIRED)
+
+find_package(ZeroMQ REQUIRED)
 
 # Target: x64dbg-automate
 set(x64dbg-automate_SOURCES

@@ -1,6 +1,21 @@
+# Build outputs
 build*/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+
+# Built plugins
+*.dp64
+*.dp32
+
+# Local build scripts (may contain hardcoded paths)
+build.bat
+
+# IDE
 .idea/
 .vs/
-cmake-build-*/
 /CMakeSettings.json
+
+# AI assistant local settings
 .claude/settings.local.json
+.kimi/

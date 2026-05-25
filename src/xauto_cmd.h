@@ -3,7 +3,7 @@
 #include <cstdint>
 
 
-constexpr const char* XAUTO_COMPAT_VERSION = "green_pepe"; // TODO: externalize
+constexpr const char* XAUTO_COMPAT_VERSION = "Axon_MCP"; // TODO: externalize
 
 
 class XAutoErrorResponse {
@@ -80,3 +80,48 @@ void get_label_at(msgpack::object root, msgpack::sbuffer& response_buffer);
 void get_comment_at(msgpack::object root, msgpack::sbuffer& response_buffer);
 void get_symbol_at(msgpack::object root, msgpack::sbuffer& response_buffer);
 std::wstring get_session_filename(size_t session_pid);
+
+void dbg_get_tls_callbacks(msgpack::sbuffer& response_buffer);
+void dbg_virtual_protect_ex(msgpack::object root, msgpack::sbuffer& response_buffer);
+void dbg_suspend_all_threads(msgpack::sbuffer& response_buffer);
+void dbg_get_peb(msgpack::sbuffer& response_buffer);
+void dbg_get_process_info(msgpack::sbuffer& response_buffer);
+
+typedef std::tuple<size_t, size_t, size_t, std::string> CallStackEntryTup;
+void dbg_get_callstack(msgpack::sbuffer& response_buffer);
+
+// Thread info: threadId, startAddress, localBase, cip, suspendCount, priority, waitReason, lastError, name
+typedef std::tuple<uint32_t, size_t, size_t, size_t, uint32_t, uint32_t, uint32_t, uint32_t, std::string> ThreadInfoTup;
+void dbg_get_threads(msgpack::sbuffer& response_buffer);
+
+// Xref record: addr, type
+typedef std::tuple<size_t, uint32_t> XrefRecordTup;
+void dbg_get_xrefs(msgpack::object root, msgpack::sbuffer& response_buffer);
+
+// Function info: start, end, instructionCount, manual
+typedef std::tuple<size_t, size_t, size_t, bool> FunctionInfoTup;
+void dbg_get_function(msgpack::object root, msgpack::sbuffer& response_buffer);
+
+// CFG node: start, end, brtrue, brfalse, icount, terminal, split, indirectcall, exits[], instrs[]
+typedef std::tuple<size_t, size_t, size_t, size_t, size_t, bool, bool, bool, std::vector<size_t>, std::vector<std::tuple<size_t, std::string>>> CfgNodeTup;
+// instr tuple: addr, hex_bytes
+typedef std::tuple<size_t, std::vector<uint8_t>> CfgInstrTup;
+void dbg_analyze_function(msgpack::object root, msgpack::sbuffer& response_buffer);
+
+void dbg_get_string(msgpack::object root, msgpack::sbuffer& response_buffer);
+
+// Patch info: addr, oldbyte, newbyte
+typedef std::tuple<size_t, uint8_t, uint8_t> PatchInfoTup;
+void dbg_get_patches(msgpack::sbuffer& response_buffer);
+
+// Module info: base, size, entry, sectionCount, name, path
+typedef std::tuple<size_t, size_t, size_t, int, std::string, std::string> ModuleInfoTup;
+void dbg_get_modules(msgpack::sbuffer& response_buffer);
+
+// SEH record: addr, handler
+typedef std::tuple<size_t, size_t> SehRecordTup;
+void dbg_get_seh_chain(msgpack::sbuffer& response_buffer);
+
+// Handle info: handle, typeNumber, grantedAccess
+typedef std::tuple<size_t, uint8_t, uint32_t> HandleInfoTup;
+void dbg_get_handles(msgpack::sbuffer& response_buffer);

@@ -198,6 +198,7 @@ bool XAutoServer::acquire_session() {
             dprintf("Bound REQ/REP on %s%d\n", bind_prefix.c_str(), sess_req_rep_port);
 
             pub_socket = zmq::socket_t(context, zmq::socket_type::pub);
+            pub_socket.set(zmq::sockopt::sndhwm, 10000);
             sess_pub_sub_port = (uint16_t)configured_pub_port;
             pub_socket.bind((bind_prefix + std::to_string(sess_pub_sub_port)).c_str());
             dprintf("Bound PUB/SUB on %s%d\n", bind_prefix.c_str(), sess_pub_sub_port);
@@ -232,6 +233,7 @@ bool XAutoServer::acquire_session() {
         dprintf("Bound REQ/REP on %s%d\n", bind_prefix.c_str(), sess_req_rep_port);
 
         pub_socket = zmq::socket_t(context, zmq::socket_type::pub);
+        pub_socket.set(zmq::sockopt::sndhwm, 10000);
         while(true) {
             try {
                 sess_pub_sub_port = distrib(gen);

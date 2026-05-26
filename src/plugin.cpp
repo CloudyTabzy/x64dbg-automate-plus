@@ -1,5 +1,6 @@
 #include "plugin.h"
 #include "pluginmain.h"
+#include "xauto_cmd.h"
 #include "resource.h"
 
 #include <string>
@@ -336,6 +337,14 @@ static INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
     return FALSE;
 }
 
+void cb_trace_execute(CBTYPE cbType, void* callbackInfo)
+{
+    if (!g_coverage_active.load(std::memory_order_relaxed)) return;
+    PLUG_CB_TRACEEXECUTE* te = (PLUG_CB_TRACEEXECUTE*)callbackInfo;
+    std::lock_guard<std::mutex> lock(g_coverage_mutex);
+    g_coverage_set.insert(te->cip);
+}
+
 void cb_menu_entry(CBTYPE cbType, void* callbackInfo)
 {
     PLUG_CB_MENUENTRY* info = (PLUG_CB_MENUENTRY*)callbackInfo;
@@ -364,6 +373,7 @@ bool pluginInit(PLUG_INITSTRUCT* initStruct)
     _plugin_registercallback(pluginHandle, CB_DETACH, cb_detach);
     _plugin_registercallback(pluginHandle, CB_CREATEPROCESS, cb_create_process);
     _plugin_registercallback(pluginHandle, CB_EXITPROCESS, cb_exit_process);
+    _plugin_registercallback(pluginHandle, CB_TRACEEXECUTE, cb_trace_execute);
     _plugin_registercallback(pluginHandle, CB_MENUENTRY, cb_menu_entry);
     return true;
 }

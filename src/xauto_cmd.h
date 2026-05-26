@@ -1,6 +1,9 @@
 #pragma once
 #include <msgpack.hpp>
 #include <cstdint>
+#include <atomic>
+#include <mutex>
+#include <unordered_set>
 
 
 constexpr const char* XAUTO_COMPAT_VERSION = "Axon_MCP"; // TODO: externalize
@@ -125,3 +128,14 @@ void dbg_get_seh_chain(msgpack::sbuffer& response_buffer);
 // Handle info: handle, typeNumber, grantedAccess
 typedef std::tuple<size_t, uint8_t, uint32_t> HandleInfoTup;
 void dbg_get_handles(msgpack::sbuffer& response_buffer);
+
+// Coverage tracking state (shared between plugin.cpp callback and xauto_cmd.cpp)
+// Use size_t; duint is typedef'd to size_t on both x86 and x64.
+extern std::unordered_set<size_t> g_coverage_set;
+extern std::mutex g_coverage_mutex;
+extern std::atomic<bool> g_coverage_active;
+
+void coverage_start(msgpack::sbuffer& response_buffer);
+void coverage_stop(msgpack::sbuffer& response_buffer);
+void coverage_get(msgpack::object root, msgpack::sbuffer& response_buffer);
+void coverage_clear(msgpack::sbuffer& response_buffer);

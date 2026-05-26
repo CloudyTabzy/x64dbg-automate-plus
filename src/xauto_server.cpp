@@ -104,6 +104,14 @@ int XAutoServer::_dispatch_cmd(msgpack::object root, msgpack::sbuffer& response_
             dbg_get_seh_chain(response_buffer);
         } else if (cmd == XAUTO_REQ_DBG_GET_HANDLES) {
             dbg_get_handles(response_buffer);
+        } else if (cmd == XAUTO_REQ_COVERAGE_START) {
+            coverage_start(response_buffer);
+        } else if (cmd == XAUTO_REQ_COVERAGE_STOP) {
+            coverage_stop(response_buffer);
+        } else if (cmd == XAUTO_REQ_COVERAGE_GET) {
+            coverage_get(root, response_buffer);
+        } else if (cmd == XAUTO_REQ_COVERAGE_CLEAR) {
+            coverage_clear(response_buffer);
         } else if (cmd == XAUTO_REQ_QUIT) {
             msgpack::pack(response_buffer, "OK_QUITTING");
             return DISPATCH_EXIT;

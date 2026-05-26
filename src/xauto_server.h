@@ -45,6 +45,10 @@ constexpr const char* XAUTO_REQ_DBG_GET_PATCHES = "XAUTO_REQ_DBG_GET_PATCHES";
 constexpr const char* XAUTO_REQ_DBG_GET_MODULES = "XAUTO_REQ_DBG_GET_MODULES";
 constexpr const char* XAUTO_REQ_DBG_GET_SEH_CHAIN = "XAUTO_REQ_DBG_GET_SEH_CHAIN";
 constexpr const char* XAUTO_REQ_DBG_GET_HANDLES = "XAUTO_REQ_DBG_GET_HANDLES";
+constexpr const char* XAUTO_REQ_COVERAGE_START = "XAUTO_REQ_COVERAGE_START";
+constexpr const char* XAUTO_REQ_COVERAGE_STOP = "XAUTO_REQ_COVERAGE_STOP";
+constexpr const char* XAUTO_REQ_COVERAGE_GET = "XAUTO_REQ_COVERAGE_GET";
+constexpr const char* XAUTO_REQ_COVERAGE_CLEAR = "XAUTO_REQ_COVERAGE_CLEAR";
 
 class XAutoServer {
     public:

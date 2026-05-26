@@ -5,6 +5,7 @@
 #include <TlHelp32.h>
 #include <Shlwapi.h>
 #include <winternl.h>
+#include <algorithm>
 
 
 void get_debugger_pid(msgpack::sbuffer& response_buffer) {
@@ -1199,4 +1200,49 @@ void dbg_get_handles(msgpack::sbuffer& response_buffer) {
         results.push_back(HandleInfoTup((size_t)h.Handle, h.TypeNumber, h.GrantedAccess));
     }
     msgpack::pack(response_buffer, results);
+}
+
+// ── Coverage tracking ────────────────────────────────────────────────────────
+
+std::unordered_set<size_t> g_coverage_set;
+std::mutex g_coverage_mutex;
+std::atomic<bool> g_coverage_active{false};
+
+// Returns (active, current_count)
+void coverage_start(msgpack::sbuffer& response_buffer) {
+    g_coverage_active.store(true);
+    std::lock_guard<std::mutex> lock(g_coverage_mutex);
+    msgpack::pack(response_buffer, std::tuple<bool, size_t>(true, g_coverage_set.size()));
+}
+
+void coverage_stop(msgpack::sbuffer& response_buffer) {
+    g_coverage_active.store(false);
+    std::lock_guard<std::mutex> lock(g_coverage_mutex);
+    msgpack::pack(response_buffer, std::tuple<bool, size_t>(false, g_coverage_set.size()));
+}
+
+// arg[1]=start_addr, arg[2]=end_addr (both 0 = return all)
+void coverage_get(msgpack::object root, msgpack::sbuffer& response_buffer) {
+    duint start_filter = 0, end_filter = 0;
+    if (root.type == msgpack::type::ARRAY && root.via.array.size >= 3) {
+        root.via.array.ptr[1].convert(start_filter);
+        root.via.array.ptr[2].convert(end_filter);
+    }
+    std::vector<size_t> addrs;
+    {
+        std::lock_guard<std::mutex> lock(g_coverage_mutex);
+        addrs.reserve(g_coverage_set.size());
+        for (auto addr : g_coverage_set) {
+            if (start_filter == 0 || (addr >= start_filter && (end_filter == 0 || addr < end_filter)))
+                addrs.push_back((size_t)addr);
+        }
+    }
+    std::sort(addrs.begin(), addrs.end());
+    msgpack::pack(response_buffer, std::tuple<std::vector<size_t>, size_t>(addrs, addrs.size()));
+}
+
+void coverage_clear(msgpack::sbuffer& response_buffer) {
+    std::lock_guard<std::mutex> lock(g_coverage_mutex);
+    g_coverage_set.clear();
+    msgpack::pack(response_buffer, true);
 }

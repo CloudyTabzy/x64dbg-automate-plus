@@ -1219,9 +1219,20 @@ void dbg_get_handles(msgpack::sbuffer& response_buffer) {
         return;
     }
     std::vector<HandleInfoTup> results;
+    auto getHandleName = DbgFunctions()->GetHandleName;
     for (int i = 0; i < list.Count(); i++) {
         auto& h = list[i];
-        results.push_back(HandleInfoTup((size_t)h.Handle, h.TypeNumber, h.GrantedAccess));
+        // Resolve the human-readable type ("File"/"Mutant"/"Event"/"Key"/
+        // "DebugObject"/...) and object name (file path, mutex name, ...).
+        // DebugObject handles in particular are a classic anti-debug signal.
+        char name[512] = {0};
+        char typeName[256] = {0};
+        if (getHandleName != nullptr) {
+            getHandleName(h.Handle, name, sizeof(name), typeName, sizeof(typeName));
+        }
+        results.push_back(HandleInfoTup(
+            (size_t)h.Handle, h.TypeNumber, h.GrantedAccess,
+            std::string(typeName), std::string(name)));
     }
     msgpack::pack(response_buffer, results);
 }

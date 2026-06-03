@@ -128,8 +128,8 @@ void dbg_get_modules(msgpack::sbuffer& response_buffer);
 typedef std::tuple<size_t, size_t> SehRecordTup;
 void dbg_get_seh_chain(msgpack::sbuffer& response_buffer);
 
-// Handle info: handle, typeNumber, grantedAccess
-typedef std::tuple<size_t, uint8_t, uint32_t> HandleInfoTup;
+// Handle info: handle, typeNumber, grantedAccess, typeName, objectName
+typedef std::tuple<size_t, uint8_t, uint32_t, std::string, std::string> HandleInfoTup;
 void dbg_get_handles(msgpack::sbuffer& response_buffer);
 
 // Coverage tracking state (shared between plugin.cpp callback and xauto_cmd.cpp)

@@ -21,6 +21,9 @@ void get_compat_v(msgpack::sbuffer& response_buffer);
 void get_debugger_version(msgpack::sbuffer& response_buffer);
 void dbg_eval(msgpack::object root, msgpack::sbuffer& response_buffer);
 void dbg_cmd_exec_direct(msgpack::object root, msgpack::sbuffer& response_buffer);
+// Atomic command exec + $result capture. Returns (success, result_value, result_valid).
+typedef std::tuple<bool, size_t, bool> CmdExecExTup;
+void dbg_cmd_exec_direct_ex(msgpack::object root, msgpack::sbuffer& response_buffer);
 void dbg_is_running(msgpack::sbuffer& response_buffer);
 void dbg_is_debugging(msgpack::sbuffer& response_buffer);
 void dbg_is_elevated(msgpack::sbuffer& response_buffer);

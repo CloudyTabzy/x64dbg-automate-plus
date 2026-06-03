@@ -49,6 +49,30 @@ void dbg_cmd_exec_direct(msgpack::object root, msgpack::sbuffer& response_buffer
     msgpack::pack(response_buffer, DbgCmdExecDirect(cmd.c_str()));
 }
 
+void dbg_cmd_exec_direct_ex(msgpack::object root, msgpack::sbuffer& response_buffer) {
+    std::string cmd;
+
+    if(root.via.array.size < 2 || root.via.array.ptr[1].type != msgpack::type::STR) {
+        XAutoErrorResponse resp_obj = {"XERROR_BAD_EVAL", "Invalid or missing command string"};
+        msgpack::pack(response_buffer, resp_obj);
+        return;
+    }
+
+    root.via.array.ptr[1].convert(cmd);
+
+    // Run the command, then atomically read back x64dbg's $result variable.
+    // Many commands (Find, eval, gpa, mod.*, etc.) write their primary output
+    // into $result; capturing it here in one round-trip avoids a race where a
+    // separate eval call could observe a $result mutated by another request.
+    bool success = DbgCmdExecDirect(cmd.c_str());
+
+    bool result_valid = false;
+    duint result_value = DbgEval("$result", &result_valid);
+
+    CmdExecExTup out(success, (size_t)result_value, result_valid);
+    msgpack::pack(response_buffer, out);
+}
+
 void dbg_is_running(msgpack::sbuffer& response_buffer) {
     msgpack::pack(response_buffer, DbgIsRunning());
 }

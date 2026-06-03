@@ -4,19 +4,38 @@ x64dbg plugin that exposes a ZMQ-based automation server for remote control of t
 
 ## Build
 
-**You must use the VS2022 cmake.** The system PATH does not have cmake. Use:
+**Always use `build.ps1`.** It is the canonical, proven build path — it locates
+`vcvarsall.bat`, imports the full MSVC environment, points CMake at the project's
+vcpkg toolchain, builds, and (with `-Deploy`) copies the plugin into the x64dbg
+plugins folders. Do NOT invoke `cmake --build` by hand: a raw build relies on a
+pre-existing cache and skips the vcpkg/MSVC environment setup, and it will not
+deploy or build the 32-bit plugin.
 
-```bash
-"/c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build64 --config Release
+```powershell
+# 64-bit Release build + deploy to the x64dbg plugins folder
+.\build.ps1 -Arch x64 -Deploy
+
+# 32-bit Release build + deploy
+.\build.ps1 -Arch x86 -Deploy
+
+# Faster rebuild when the build dir is already configured (skip cmake configure)
+.\build.ps1 -Arch x64 -Deploy -NoConfigure
 ```
 
-If you need to regenerate the build system:
+Notes for running it from a tool:
+- Run it with the **PowerShell** tool, not Bash (the `.\build.ps1` path mangles
+  through a bash→powershell hop). Do **not** append `2>&1` — the script sets
+  `$ErrorActionPreference='Stop'`, and redirecting cmake/cmkr's stderr banner
+  turns it into a thrown error even on a successful build.
+- A change to any `src/*.cpp` is shared by both arches — build **both** x64 and
+  x86 so the `.dp64` and `.dp32` stay in sync.
 
-```bash
-"/c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" -B build64 -G "Visual Studio 17 2022" -A x64
-```
+Outputs: `build64\Release\x64dbg-automate.dp64`, `build32\Release\x64dbg-automate.dp32`.
 
-Output: `build64/Release/x64dbg-automate.dp64`
+`-Deploy` copies the plugin **and** `libzmq-mt-4_3_5.dll` to
+`C:\Dev\RE_Tools\snapshot_2025-08-19_19-40\release\{x64,x32}\plugins`
+(override by setting `X64DBG_PATH` to a release dir containing `x64\` and `x32\`).
+After deploying, restart x64dbg/x32dbg (or use its plugin-reload) to load the new build.
 
 ## Project structure
 

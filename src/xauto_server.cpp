@@ -34,6 +34,8 @@ int XAutoServer::_dispatch_cmd(msgpack::object root, msgpack::sbuffer& response_
             dbg_eval(root, response_buffer);
         } else if (cmd == XAUTO_REQ_DBG_CMD_EXEC_DIRECT) {
             dbg_cmd_exec_direct(root, response_buffer);
+        } else if (cmd == XAUTO_REQ_DBG_CMD_EXEC_DIRECT_EX) {
+            dbg_cmd_exec_direct_ex(root, response_buffer);
         } else if (cmd == XAUTO_REQ_DBG_IS_RUNNING) {
             dbg_is_running(response_buffer);
         } else if (cmd == XAUTO_REQ_DBG_IS_DEBUGGING) {
